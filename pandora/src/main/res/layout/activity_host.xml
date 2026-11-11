@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/background"
+    android:fitsSystemWindows="true">
+
+    <include
+        android:id="@+id/BuildPage"
+        layout="@layout/activity_main" />
+
+    <include
+        android:id="@+id/AboutPage"
+        layout="@layout/activity_about"
+        android:visibility="gone" />
+
+    <com.pandora.builder.ui.GlassTabBar
+        android:id="@+id/TabBar"
+        android:layout_width="match_parent"
+        android:layout_height="50dp"
+        android:layout_gravity="bottom"
+        android:layout_marginStart="20dp"
+        android:layout_marginEnd="20dp"
+        android:layout_marginBottom="10dp" />
+</FrameLayout>

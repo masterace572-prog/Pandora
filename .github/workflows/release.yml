@@ -1,0 +1,103 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]*'
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Set up Java
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd
+        with:
+          packages: ''
+
+      - name: Install Android build packages
+        run: sdkmanager --install "platforms;android-37.0" "build-tools;37.0.0" "ndk;30.0.16248370" "cmake;3.22.1"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c
+        with:
+          cache-provider: basic
+
+      - name: Restore release signing
+        env:
+          PANDORA_KEYSTORE_BASE64: ${{ secrets.PANDORA_KEYSTORE_BASE64 }}
+          PANDORA_STORE_PASSWORD: ${{ secrets.PANDORA_STORE_PASSWORD }}
+          PANDORA_KEY_PASSWORD: ${{ secrets.PANDORA_KEY_PASSWORD }}
+          PANDORA_KEY_ALIAS: ${{ secrets.PANDORA_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          test -n "$PANDORA_KEYSTORE_BASE64"
+          test -n "$PANDORA_STORE_PASSWORD"
+          test -n "$PANDORA_KEY_PASSWORD"
+          test -n "$PANDORA_KEY_ALIAS"
+          mkdir -p signing
+          printf '%s' "$PANDORA_KEYSTORE_BASE64" | base64 --decode > signing/pandora-main.jks
+          {
+            printf 'storeFile=signing/pandora-main.jks\n'
+            printf 'storePassword=%s\n' "$PANDORA_STORE_PASSWORD"
+            printf 'keyAlias=%s\n' "$PANDORA_KEY_ALIAS"
+            printf 'keyPassword=%s\n' "$PANDORA_KEY_PASSWORD"
+          } > signing/main-keystore.properties
+          chmod 600 signing/pandora-main.jks signing/main-keystore.properties
+
+      - name: Read release notes
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          test "$version" != "$GITHUB_REF_NAME"
+          awk -v version="$version" '
+            index($0, "## [" version "]") == 1 { capture = 1; next }
+            capture && /^## \[/ { exit }
+            capture { print }
+          ' CHANGELOG.md > release-notes.md
+          test -s release-notes.md
+
+      - name: Build signed release
+        run: ./gradlew :pandora:assembleRelease --no-daemon
+
+      - name: Verify and package release
+        env:
+          EXPECTED_CERT_SHA256: e26548fa06ecb27737539f62f14c006f16e235582e34ad8c8aaae246fd504a5a
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          apk=pandora/build/outputs/apk/release/pandora-release.apk
+          test -s "$apk"
+          "$ANDROID_HOME/build-tools/37.0.0/zipalign" -c 4 "$apk"
+          "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --verbose "$apk"
+          certificate=$("$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --print-certs "$apk" | sed -n 's/.*certificate SHA-256 digest: //p' | head -n 1)
+          test "$certificate" = "$EXPECTED_CERT_SHA256"
+          actual_version=$("$ANDROID_HOME/build-tools/37.0.0/aapt" dump badging "$apk" | sed -n "s/.*versionName='\([^']*\)'.*/\1/p" | head -n 1)
+          test "$actual_version" = "$version"
+          mkdir -p dist
+          cp "$apk" "dist/Pandora-${GITHUB_REF_NAME}-arm64.apk"
+          (cd dist && sha256sum "Pandora-${GITHUB_REF_NAME}-arm64.apk" > "Pandora-${GITHUB_REF_NAME}-arm64.apk.sha256")
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            "dist/Pandora-${GITHUB_REF_NAME}-arm64.apk" \
+            "dist/Pandora-${GITHUB_REF_NAME}-arm64.apk.sha256" \
+            --title "Pandora $GITHUB_REF_NAME" \
+            --notes-file release-notes.md \
+            --verify-tag \
+            --latest

@@ -1,0 +1,17 @@
+.gradle/
+local.properties
+**/build/
+**/.cxx/
+*.iml
+.idea/
+
+# Generated Android artifacts
+*.apk
+*.aab
+*.idsig
+
+# Local signing material
+/signing/*.properties
+*.jks
+*.keystore
+*.p12
