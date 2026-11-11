@@ -2,8 +2,9 @@ name: Android CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'arena/**']
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -44,3 +45,12 @@ jobs:
           apk=pandora/build/outputs/apk/release/pandora-release-unsigned.apk
           test -s "$apk"
           "$ANDROID_HOME/build-tools/37.0.0/zipalign" -c 4 "$apk"
+
+      - name: Upload built APKs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: pandora-apks
+          path: |
+            pandora/build/outputs/apk/debug/pandora-debug.apk
+            pandora/build/outputs/apk/release/pandora-release-unsigned.apk
+          if-no-files-found: error
