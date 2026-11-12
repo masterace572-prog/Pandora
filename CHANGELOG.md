@@ -21,6 +21,9 @@
 
 ### Fixed
 
+- APKs containing duplicated archive entries (seen from some repack tools,
+  e.g. two `classes2.dex`) no longer abort with a bare ZipException: the first
+  copy wins, and engineered collisions fail with a clear entry name.
 - Stat spoofing is now consistent: `fstat`, `newfstatat` and `statx` all report
   the embedded original's size, so code that sizes reads by `fstat` no longer
   hits early EOF (a source of `ZipException` crashes) and stat interfaces can

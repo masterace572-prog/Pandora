@@ -19,8 +19,10 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Enumeration;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import java.util.zip.Deflater;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
@@ -103,12 +105,20 @@ public final class ApkPatcher {
             CountingOutputStream Counted = new CountingOutputStream(new FileOutputStream(OutputApk));
             try (ZipOutputStream Output = new ZipOutputStream(Counted)) {
                 Output.setLevel(Deflater.BEST_COMPRESSION);
+                // Track every name written: APKs produced by some repack tools
+                // contain duplicated entry names (e.g. two classes2.dex), which
+                // would otherwise fail deep inside the build with a bare
+                // ZipException from ZipOutputStream.
+                Set<String> Written = new HashSet<>();
                 Enumeration<? extends ZipEntry> Entries = Input.entries();
                 while (Entries.hasMoreElements()) {
                     ZipEntry Entry = Entries.nextElement();
                     String Name = Entry.getName();
                     if (Name.equals("AndroidManifest.xml") || IsSigningMetadata(Name)) {
                         continue;
+                    }
+                    if (!Written.add(Name)) {
+                        continue; // duplicated archive entry: keep the first copy
                     }
                     if (Name.equals("resources.arsc")) {
                         CopyStoredEntry(Input.getInputStream(Entry), Output, Counted, Entry);
@@ -117,24 +127,30 @@ public final class ApkPatcher {
                     }
                 }
 
+                ReservedEntry(Written, "AndroidManifest.xml");
                 AddEntry(Output, "AndroidManifest.xml", Manifest.Bytes);
                 if (SlimContainer != null) {
+                    ReservedEntry(Written, SlimFormat.ContainerPath);
                     CopyEntry(new FileInputStream(SlimContainer), Output, SlimFormat.ContainerPath);
                 } else {
+                    ReservedEntry(Written, EmbeddedApk);
                     try (InputStream Original = new FileInputStream(InputApk)) {
                         CopyEntry(Original, Output, EmbeddedApk);
                     }
                 }
                 if (Manifest.OriginalFactory != null) {
+                    ReservedEntry(Written, "assets/pandora/original_factory.txt");
                     AddEntry(Output, "assets/pandora/original_factory.txt",
                             Manifest.OriginalFactory.getBytes(StandardCharsets.UTF_8));
                 }
 
                 for (ZipEntry Entry : PayloadDex) {
                     String Name = NextDex == 1 ? "classes.dex" : "classes" + NextDex + ".dex";
+                    ReservedEntry(Written, Name);
                     CopyEntry(Payload.getInputStream(Entry), Output, Name);
                     NextDex++;
                 }
+                ReservedEntry(Written, NativeLibrary);
                 CopyEntry(Payload.getInputStream(LibraryEntry), Output, NativeLibrary);
             }
 
@@ -190,6 +206,13 @@ public final class ApkPatcher {
     /** Entries that vanish from the outer APK and must ride inside the container. */
     private static boolean IsDroppedEntry(String Name) {
         return Name.equals("AndroidManifest.xml") || IsSigningMetadata(Name);
+    }
+
+    /** Fails loudly instead of letting ZipOutputStream emit "duplicate entry". */
+    private static void ReservedEntry(Set<String> Written, String Name) throws IOException {
+        if (!Written.add(Name)) {
+            throw new IOException("Output entry collision: " + Name);
+        }
     }
 
     private static ManifestResult RewriteManifest(InputStream Input) throws IOException {
@@ -254,7 +277,7 @@ public final class ApkPatcher {
     }
 
     private static boolean IsDexName(String Name) {
-        return Name.equals("classes.dex") || Name.matches("classes(?:[2-9]|[1-9][0-9]+)\\\\.dex");
+        return Name.equals("classes.dex") || Name.matches("classes(?:[2-9]|[1-9][0-9]+)\\.dex");
     }
 
     private static boolean IsSigningMetadata(String Name) {
